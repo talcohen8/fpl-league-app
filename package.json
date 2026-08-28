@@ -1,0 +1,9 @@
+{
+  "name": "fpl-weekly-winners",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shows FPL classic league gameweek winners, net of transfer point hits.",
+  "scripts": {
+    "dev": "vercel dev"
+  }
+}

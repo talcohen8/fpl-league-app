@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FPL Weekly Winners</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --purple: #37003c;
+    --green: #00ff87;
+    --red: #ff4d4d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--purple);
+    padding: 24px 20px;
+    text-align: center;
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 1.5rem;
+  }
+  header p {
+    margin: 0;
+    color: #d6b3ff;
+    font-size: 0.9rem;
+  }
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px 16px 60px;
+  }
+  .setup {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .setup input {
+    flex: 1;
+    min-width: 160px;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 0.95rem;
+  }
+  .setup button {
+    background: var(--green);
+    color: #003300;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .setup button:hover { opacity: 0.9; }
+  #status {
+    text-align: center;
+    color: var(--muted);
+    padding: 30px 0;
+  }
+  .league-meta {
+    text-align: center;
+    margin-bottom: 20px;
+    color: var(--muted);
+  }
+  .league-meta strong { color: var(--text); }
+  .gw-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .gw-nav button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .gw-nav button:disabled { opacity: 0.3; cursor: default; }
+  .gw-nav select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+  }
+  .winners {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .winner-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .winner-card .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .winner-card .name {
+    font-size: 1.1rem;
+    font-weight: 700;
+  }
+  .winner-card .pts {
+    color: var(--green);
+    font-weight: 700;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.top { background: rgba(0,255,135,0.07); }
+  tr.top td:first-child::before { content: "🏆 "; }
+  .hit { color: var(--red); }
+  .net { font-weight: 700; }
+  .error {
+    background: #3d1a1a;
+    border: 1px solid #6b2b2b;
+    color: #ffb3b3;
+    padding: 14px 16px;
+    border-radius: 8px;
+  }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-top: 24px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚽ FPL Weekly Winners</h1>
+  <p>Gameweek-by-gameweek points, with transfer hits taken into account</p>
+</header>
+
+<div class="container">
+
+  <div class="setup">
+    <input id="leagueId" type="text" inputmode="numeric" placeholder="League ID (e.g. 1498266)" />
+    <button id="loadBtn">Load League</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="content"></div>
+
+</div>
+
+<footer>Data from the official Fantasy Premier League API.</footer>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const leagueIdInput = document.getElementById('leagueId');
+  const statusEl = document.getElementById('status');
+  const contentEl = document.getElementById('content');
+  const loadBtn = document.getElementById('loadBtn');
+
+  let leagueData = null;
+  let currentWeekIndex = 0;
+
+  const prefillId = params.get('id');
+  if (prefillId) leagueIdInput.value = prefillId;
+
+  loadBtn.addEventListener('click', () => {
+    const id = leagueIdInput.value.trim();
+    if (!id) return;
+    const url = new URL(window.location);
+    url.searchParams.set('id', id);
+    window.history.replaceState({}, '', url);
+    loadLeague(id);
+  });
+
+  leagueIdInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadBtn.click();
+  });
+
+  async function loadLeague(id) {
+    contentEl.innerHTML = '';
+    statusEl.textContent = 'Loading league data… this can take a few seconds for larger leagues.';
+    try {
+      const res = await fetch(`/api/league?id=${encodeURIComponent(id)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load league.');
+      leagueData = data;
+      currentWeekIndex = data.weeks.length - 1;
+      statusEl.textContent = '';
+      render();
+    } catch (err) {
+      statusEl.textContent = '';
+      contentEl.innerHTML = `<div class="error">⚠️ ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function render() {
+    if (!leagueData || leagueData.weeks.length === 0) {
+      contentEl.innerHTML = `<div class="error">No gameweek data yet for this league.</div>`;
+      return;
+    }
+
+    const week = leagueData.weeks[currentWeekIndex];
+
+    const options = leagueData.weeks
+      .map((w, i) => `<option value="${i}" ${i === currentWeekIndex ? 'selected' : ''}>Gameweek ${w.event}</option>`)
+      .join('');
+
+    const rowsHtml = week.rows.map((r, i) => `
+      <tr class="${i === 0 ? 'top' : ''}">
+        <td>${escapeHtml(r.teamName)}<br><span style="color:var(--muted); font-size:0.78rem;">${escapeHtml(r.playerName)}</span></td>
+        <td class="num">${r.gross}</td>
+        <td class="num ${r.hit > 0 ? 'hit' : ''}">${r.hit > 0 ? '-' + r.hit : '0'}</td>
+        <td class="num net">${r.net}</td>
+        <td class="num">${r.transfers}</td>
+      </tr>
+    `).join('');
+
+    contentEl.innerHTML = `
+      <div class="league-meta"><strong>${escapeHtml(leagueData.leagueName)}</strong> · ${leagueData.managerCount} teams</div>
+
+      <div class="gw-nav">
+        <button id="prevBtn" ${currentWeekIndex === 0 ? 'disabled' : ''}>&larr; Prev</button>
+        <select id="gwSelect">${options}</select>
+        <button id="nextBtn" ${currentWeekIndex === leagueData.weeks.length - 1 ? 'disabled' : ''}>Next &rarr;</button>
+      </div>
+
+      <div class="winners">
+        <div class="winner-card">
+          <div class="label">Most gross points</div>
+          <div class="name">${escapeHtml(week.grossWinner.teamName)}</div>
+          <div class="pts">${week.grossWinner.gross} pts</div>
+        </div>
+        <div class="winner-card">
+          <div class="label">Most points after transfer hits</div>
+          <div class="name">${escapeHtml(week.netWinner.teamName)}</div>
+          <div class="pts">${week.netWinner.net} pts</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Team</th>
+            <th class="num">Gross</th>
+            <th class="num">Hit</th>
+            <th class="num">Net</th>
+            <th class="num">Transfers</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    `;
+
+    document.getElementById('prevBtn').addEventListener('click', () => {
+      if (currentWeekIndex > 0) { currentWeekIndex--; render(); }
+    });
+    document.getElementById('nextBtn').addEventListener('click', () => {
+      if (currentWeekIndex < leagueData.weeks.length - 1) { currentWeekIndex++; render(); }
+    });
+    document.getElementById('gwSelect').addEventListener('change', (e) => {
+      currentWeekIndex = Number(e.target.value);
+      render();
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  // auto-load if a league id was passed in the URL
+  if (prefillId) loadLeague(prefillId);
+</script>
+
+</body>
+</html>
