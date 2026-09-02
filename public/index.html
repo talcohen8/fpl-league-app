@@ -165,6 +165,29 @@
     padding: 14px 16px;
     border-radius: 8px;
   }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .tabs button {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 10px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .tabs button.active {
+    background: var(--green);
+    color: #003300;
+    border-color: var(--green);
+  }
+  td.rank, th.rank { width: 40px; text-align: center; color: var(--muted); }
+  tr.rank1 td.rank { color: var(--green); font-weight: 700; }
   footer {
     text-align: center;
     color: var(--muted);
@@ -187,6 +210,11 @@
     <button id="loadBtn">Load League</button>
   </div>
 
+  <div class="tabs" id="tabs" style="display:none;">
+    <button id="tabWeekly" class="active">Weekly View</button>
+    <button id="tabLeaderboard">Season Leaderboard</button>
+  </div>
+
   <div id="status"></div>
   <div id="content"></div>
 
@@ -203,6 +231,23 @@
 
   let leagueData = null;
   let currentWeekIndex = 0;
+  let activeTab = 'weekly';
+
+  document.getElementById('tabWeekly').addEventListener('click', () => {
+    activeTab = 'weekly';
+    updateTabButtons();
+    render();
+  });
+  document.getElementById('tabLeaderboard').addEventListener('click', () => {
+    activeTab = 'leaderboard';
+    updateTabButtons();
+    render();
+  });
+
+  function updateTabButtons() {
+    document.getElementById('tabWeekly').classList.toggle('active', activeTab === 'weekly');
+    document.getElementById('tabLeaderboard').classList.toggle('active', activeTab === 'leaderboard');
+  }
 
   const prefillId = params.get('id');
   if (prefillId) leagueIdInput.value = prefillId;
@@ -229,6 +274,9 @@
       if (!res.ok) throw new Error(data.error || 'Failed to load league.');
       leagueData = data;
       currentWeekIndex = data.weeks.length - 1;
+      activeTab = 'weekly';
+      updateTabButtons();
+      document.getElementById('tabs').style.display = 'flex';
       statusEl.textContent = '';
       render();
     } catch (err) {
@@ -243,6 +291,74 @@
       return;
     }
 
+    if (activeTab === 'leaderboard') {
+      renderLeaderboard();
+    } else {
+      renderWeekly();
+    }
+  }
+
+  function computeLeaderboard() {
+    // managerId -> { teamName, playerName, wins, grossWins }
+    const stats = new Map();
+
+    for (const week of leagueData.weeks) {
+      if (!week.rows.length) continue;
+
+      const topNet = Math.max(...week.rows.map(r => r.net));
+      const topGross = Math.max(...week.rows.map(r => r.gross));
+
+      for (const r of week.rows) {
+        if (!stats.has(r.managerId)) {
+          stats.set(r.managerId, {
+            teamName: r.teamName,
+            playerName: r.playerName,
+            wins: 0,
+            grossWins: 0,
+          });
+        }
+        const s = stats.get(r.managerId);
+        if (r.net === topNet) s.wins += 1;
+        if (r.gross === topGross) s.grossWins += 1;
+      }
+    }
+
+    return Array.from(stats.values()).sort((a, b) => b.wins - a.wins || b.grossWins - a.grossWins);
+  }
+
+  function renderLeaderboard() {
+    const board = computeLeaderboard();
+
+    const rowsHtml = board.map((s, i) => `
+      <tr class="${i === 0 && s.wins > 0 ? 'rank1' : ''}">
+        <td class="rank">${i + 1}</td>
+        <td>${escapeHtml(s.teamName)}<br><span style="color:var(--muted); font-size:0.78rem;">${escapeHtml(s.playerName)}</span></td>
+        <td class="num net">${s.wins}</td>
+        <td class="num">${s.grossWins}</td>
+      </tr>
+    `).join('');
+
+    contentEl.innerHTML = `
+      <div class="league-meta"><strong>${escapeHtml(leagueData.leagueName)}</strong> · ${leagueData.managerCount} teams · ${leagueData.weeks.length} gameweeks played</div>
+      <table>
+        <thead>
+          <tr>
+            <th class="rank">#</th>
+            <th>Team</th>
+            <th class="num">GW Wins (net)</th>
+            <th class="num">GW Wins (gross)</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <p style="color:var(--muted); font-size:0.8rem; margin-top:10px;">
+        "GW Wins (net)" = number of gameweeks a team had the most points after transfer hits.
+        Ties count as a win for everyone tied that week. "GW Wins (gross)" counts raw points wins, ignoring hits.
+      </p>
+    `;
+  }
+
+  function renderWeekly() {
     const week = leagueData.weeks[currentWeekIndex];
 
     const options = leagueData.weeks
