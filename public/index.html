@@ -133,6 +133,11 @@
     color: var(--green);
     font-weight: 700;
   }
+  .winner-card .sub {
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin-top: 2px;
+  }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -158,6 +163,8 @@
   tr.top td:first-child::before { content: "🏆 "; }
   .hit { color: var(--red); }
   .net { font-weight: 700; }
+  .goals { color: #79c0ff; }
+  .goals-loading { color: var(--muted); font-style: italic; }
   .error {
     background: #3d1a1a;
     border: 1px solid #6b2b2b;
@@ -220,7 +227,7 @@
 
 </div>
 
-<footer>Data from the official Fantasy Premier League API.</footer>
+<footer>Data from the official Fantasy Premier League API. Ties on net points are broken by goals scored by each team's starting XI (captain doubled).</footer>
 
 <script>
   const params = new URLSearchParams(window.location.search);
@@ -229,25 +236,11 @@
   const contentEl = document.getElementById('content');
   const loadBtn = document.getElementById('loadBtn');
 
-  let leagueData = null;
+  let leagueData = null;   // season data: gross/hit/net for every week (fast, loaded once)
+  let currentLeagueId = null;
   let currentWeekIndex = 0;
   let activeTab = 'weekly';
-
-  document.getElementById('tabWeekly').addEventListener('click', () => {
-    activeTab = 'weekly';
-    updateTabButtons();
-    render();
-  });
-  document.getElementById('tabLeaderboard').addEventListener('click', () => {
-    activeTab = 'leaderboard';
-    updateTabButtons();
-    render();
-  });
-
-  function updateTabButtons() {
-    document.getElementById('tabWeekly').classList.toggle('active', activeTab === 'weekly');
-    document.getElementById('tabLeaderboard').classList.toggle('active', activeTab === 'leaderboard');
-  }
+  const goalsCache = new Map(); // event -> Map(managerId -> goals), filled on demand
 
   const prefillId = params.get('id');
   if (prefillId) leagueIdInput.value = prefillId;
@@ -265,14 +258,33 @@
     if (e.key === 'Enter') loadBtn.click();
   });
 
+  document.getElementById('tabWeekly').addEventListener('click', () => {
+    activeTab = 'weekly';
+    updateTabButtons();
+    render();
+  });
+  document.getElementById('tabLeaderboard').addEventListener('click', () => {
+    activeTab = 'leaderboard';
+    updateTabButtons();
+    render();
+  });
+
+  function updateTabButtons() {
+    document.getElementById('tabWeekly').classList.toggle('active', activeTab === 'weekly');
+    document.getElementById('tabLeaderboard').classList.toggle('active', activeTab === 'leaderboard');
+  }
+
   async function loadLeague(id) {
     contentEl.innerHTML = '';
-    statusEl.textContent = 'Loading league data… this can take a few seconds for larger leagues.';
+    document.getElementById('tabs').style.display = 'none';
+    goalsCache.clear();
+    statusEl.textContent = 'Loading league data…';
     try {
       const res = await fetch(`/api/league?id=${encodeURIComponent(id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load league.');
       leagueData = data;
+      currentLeagueId = id;
       currentWeekIndex = data.weeks.length - 1;
       activeTab = 'weekly';
       updateTabButtons();
@@ -283,6 +295,25 @@
       statusEl.textContent = '';
       contentEl.innerHTML = `<div class="error">⚠️ ${escapeHtml(err.message)}</div>`;
     }
+  }
+
+  // Fetches goals for one gameweek, only if not already cached, then re-renders.
+  async function ensureGoalsForWeek(event) {
+    if (goalsCache.has(event)) return;
+
+    // mark as "loading" so we don't fire duplicate requests while awaiting
+    goalsCache.set(event, 'loading');
+    render();
+
+    try {
+      const res = await fetch(`/api/gw-goals?id=${encodeURIComponent(currentLeagueId)}&gw=${event}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load goals.');
+      goalsCache.set(event, data.goalsByManager);
+    } catch (err) {
+      goalsCache.delete(event); // allow retry on next view
+    }
+    render();
   }
 
   function render() {
@@ -299,7 +330,8 @@
   }
 
   function computeLeaderboard() {
-    // managerId -> { teamName, playerName, wins, grossWins }
+    // Season leaderboard uses only gross/net points — no goals — so it's
+    // always instant, since it only needs data already loaded up front.
     const stats = new Map();
 
     for (const week of leagueData.weeks) {
@@ -323,7 +355,9 @@
       }
     }
 
-    return Array.from(stats.values()).sort((a, b) => b.wins - a.wins || b.grossWins - a.grossWins);
+    return Array.from(stats.values()).sort(
+      (a, b) => b.wins - a.wins || b.grossWins - a.grossWins
+    );
   }
 
   function renderLeaderboard() {
@@ -352,28 +386,59 @@
         <tbody>${rowsHtml}</tbody>
       </table>
       <p style="color:var(--muted); font-size:0.8rem; margin-top:10px;">
-        "GW Wins (net)" = number of gameweeks a team had the most points after transfer hits.
-        Ties count as a win for everyone tied that week. "GW Wins (gross)" counts raw points wins, ignoring hits.
+        "GW Wins (net)" = number of gameweeks a team had the most points after transfer hits. Ties count as a
+        win for everyone tied that week. "GW Wins (gross)" counts raw points wins, ignoring hits.
       </p>
     `;
   }
 
   function renderWeekly() {
     const week = leagueData.weeks[currentWeekIndex];
+    const event = week.event;
+
+    // kick off (or reuse) the goals fetch for this specific week only
+    const cached = goalsCache.get(event);
+    if (cached === undefined) {
+      ensureGoalsForWeek(event); // fires async, will re-render when done
+    }
+    const goalsMap = (cached && cached !== 'loading') ? cached : null;
+    const goalsPending = cached === 'loading' || cached === undefined;
+
+    // Build display rows: sort by net, using goals as tiebreaker only once loaded
+    const rows = [...week.rows].sort((a, b) => {
+      if (b.net !== a.net) return b.net - a.net;
+      if (goalsMap) {
+        const ga = goalsMap[a.managerId] ?? 0;
+        const gb = goalsMap[b.managerId] ?? 0;
+        return gb - ga;
+      }
+      return 0;
+    });
 
     const options = leagueData.weeks
       .map((w, i) => `<option value="${i}" ${i === currentWeekIndex ? 'selected' : ''}>Gameweek ${w.event}</option>`)
       .join('');
 
-    const rowsHtml = week.rows.map((r, i) => `
-      <tr class="${i === 0 ? 'top' : ''}">
-        <td>${escapeHtml(r.teamName)}<br><span style="color:var(--muted); font-size:0.78rem;">${escapeHtml(r.playerName)}</span></td>
-        <td class="num">${r.gross}</td>
-        <td class="num ${r.hit > 0 ? 'hit' : ''}">${r.hit > 0 ? '-' + r.hit : '0'}</td>
-        <td class="num net">${r.net}</td>
-        <td class="num">${r.transfers}</td>
-      </tr>
-    `).join('');
+    const rowsHtml = rows.map((r, i) => {
+      let goalsCell;
+      if (goalsPending) {
+        goalsCell = `<span class="goals-loading">…</span>`;
+      } else {
+        goalsCell = `<span class="goals">${goalsMap[r.managerId] ?? 0}</span>`;
+      }
+      return `
+        <tr class="${i === 0 ? 'top' : ''}">
+          <td>${escapeHtml(r.teamName)}<br><span style="color:var(--muted); font-size:0.78rem;">${escapeHtml(r.playerName)}</span></td>
+          <td class="num">${r.gross}</td>
+          <td class="num ${r.hit > 0 ? 'hit' : ''}">${r.hit > 0 ? '-' + r.hit : '0'}</td>
+          <td class="num net">${r.net}</td>
+          <td class="num">${goalsCell}</td>
+          <td class="num">${r.transfers}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const netWinnerGoals = goalsPending ? '…' : (goalsMap[rows[0]?.managerId] ?? 0);
 
     contentEl.innerHTML = `
       <div class="league-meta"><strong>${escapeHtml(leagueData.leagueName)}</strong> · ${leagueData.managerCount} teams</div>
@@ -392,8 +457,9 @@
         </div>
         <div class="winner-card">
           <div class="label">Most points after transfer hits</div>
-          <div class="name">${escapeHtml(week.netWinner.teamName)}</div>
-          <div class="pts">${week.netWinner.net} pts</div>
+          <div class="name">${escapeHtml(rows[0].teamName)}</div>
+          <div class="pts">${rows[0].net} pts</div>
+          <div class="sub">${netWinnerGoals === '…' ? 'goals loading…' : netWinnerGoals + ' goals scored'}</div>
         </div>
       </div>
 
@@ -404,11 +470,16 @@
             <th class="num">Gross</th>
             <th class="num">Hit</th>
             <th class="num">Net</th>
+            <th class="num">Goals</th>
             <th class="num">Transfers</th>
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
+      <p style="color:var(--muted); font-size:0.8rem; margin-top:10px;">
+        Rows are sorted by Net points, then by Goals scored (starting XI, captain doubled) as a tiebreaker
+        once goals finish loading for this gameweek.
+      </p>
     `;
 
     document.getElementById('prevBtn').addEventListener('click', () => {
@@ -429,7 +500,6 @@
     }[c]));
   }
 
-  // auto-load if a league id was passed in the URL
   if (prefillId) loadLeague(prefillId);
 </script>
 
