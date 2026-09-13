@@ -227,7 +227,7 @@
 
 </div>
 
-<footer>Data from the official Fantasy Premier League API. Ties on net points are broken by goals scored by each team's starting XI (captain doubled).</footer>
+<footer>Data from the official Fantasy Premier League API. Ties on net points are broken by goals scored by each team's starting XI.</footer>
 
 <script>
   const params = new URLSearchParams(window.location.search);
@@ -332,10 +332,13 @@
   function computeLeaderboard() {
     // Season leaderboard uses only gross/net points — no goals — so it's
     // always instant, since it only needs data already loaded up front.
+    // Only fully-finished gameweeks count, so an in-progress gameweek
+    // doesn't affect standings until it's confirmed complete.
     const stats = new Map();
 
     for (const week of leagueData.weeks) {
       if (!week.rows.length) continue;
+      if (!week.finished) continue;
 
       const topNet = Math.max(...week.rows.map(r => r.net));
       const topGross = Math.max(...week.rows.map(r => r.gross));
@@ -362,6 +365,8 @@
 
   function renderLeaderboard() {
     const board = computeLeaderboard();
+    const finishedCount = leagueData.weeks.filter(w => w.finished).length;
+    const inProgress = leagueData.weeks.find(w => !w.finished);
 
     const rowsHtml = board.map((s, i) => `
       <tr class="${i === 0 && s.wins > 0 ? 'rank1' : ''}">
@@ -373,7 +378,8 @@
     `).join('');
 
     contentEl.innerHTML = `
-      <div class="league-meta"><strong>${escapeHtml(leagueData.leagueName)}</strong> · ${leagueData.managerCount} teams · ${leagueData.weeks.length} gameweeks played</div>
+      <div class="league-meta"><strong>${escapeHtml(leagueData.leagueName)}</strong> · ${leagueData.managerCount} teams · ${finishedCount} gameweeks completed</div>
+      ${inProgress ? `<div style="text-align:center; color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Gameweek ${inProgress.event} is still in progress and isn't counted yet — it'll be included once finalized.</div>` : ''}
       <table>
         <thead>
           <tr>
@@ -386,8 +392,8 @@
         <tbody>${rowsHtml}</tbody>
       </table>
       <p style="color:var(--muted); font-size:0.8rem; margin-top:10px;">
-        "GW Wins (net)" = number of gameweeks a team had the most points after transfer hits. Ties count as a
-        win for everyone tied that week. "GW Wins (gross)" counts raw points wins, ignoring hits.
+        "GW Wins (net)" = number of completed gameweeks a team had the most points after transfer hits. Ties count
+        as a win for everyone tied that week. "GW Wins (gross)" counts raw points wins, ignoring hits.
       </p>
     `;
   }
@@ -477,7 +483,7 @@
         <tbody>${rowsHtml}</tbody>
       </table>
       <p style="color:var(--muted); font-size:0.8rem; margin-top:10px;">
-        Rows are sorted by Net points, then by Goals scored (starting XI, captain doubled) as a tiebreaker
+        Rows are sorted by Net points, then by Goals scored (starting XI) as a tiebreaker
         once goals finish loading for this gameweek.
       </p>
     `;
