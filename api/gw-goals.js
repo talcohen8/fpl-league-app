@@ -1,7 +1,8 @@
 // /api/gw-goals?id=1498266&gw=5
 //
-// On-demand endpoint: computes goals scored by each manager's starting XI
-// (captain's goals doubled, matching FPL scoring) for a single gameweek.
+// On-demand endpoint: computes raw goals scored by each manager's starting XI
+// for a single gameweek (captain's goals are NOT doubled — this is a simple
+// goal count, not an FPL points calculation).
 // Kept separate from /api/league so this expensive per-manager calculation
 // only ever runs for the one gameweek currently being viewed, not the
 // whole season.
@@ -72,9 +73,7 @@ export default async function handler(req, res) {
             let goals = 0;
             for (const pick of picksData.picks || []) {
               if (pick.position > 11) continue; // starting XI only
-              const playerGoals = goalsByElement.get(pick.element) ?? 0;
-              const multiplier = pick.multiplier ?? (pick.is_captain ? 2 : 1);
-              goals += playerGoals * multiplier;
+              goals += goalsByElement.get(pick.element) ?? 0; // raw goals, no captain multiplier
             }
             goalsByManager[managerId] = goals;
           } catch {
