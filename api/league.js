@@ -1,11 +1,18 @@
 // /api/league?id=1498266
 //
-// Proxies the FPL API (which blocks browser CORS requests) and returns
-// a ready-to-use per-gameweek breakdown for every manager in the league:
-//   - gross points scored that gameweek
-//   - points lost to transfer costs ("hits") that gameweek
-//   - net points (gross - transfer cost)
-// plus who had the most gross and most net points each gameweek.
+// Fast endpoint: proxies the FPL API and returns gross points, transfer
+// hit cost, and net points for every gameweek and every manager in the
+// league. Deliberately does NOT compute goals scored here — that's a much
+// more expensive per-manager-per-gameweek calculation, handled separately
+// by /api/gw-goals so it only runs for the one gameweek being viewed.
+
+const FETCH_HEADERS = { "User-Agent": "Mozilla/5.0" };
+
+async function fetchJson(url) {
+  const res = await fetch(url, { headers: FETCH_HEADERS });
+  if (!res.ok) throw new Error(`FPL API returned ${res.status} for ${url}`);
+  return res.json();
+}
 
 export default async function handler(req, res) {
   const { id } = req.query;
@@ -23,16 +30,9 @@ export default async function handler(req, res) {
     let leagueName = "";
 
     while (hasNext) {
-      const standingsRes = await fetch(
-        `https://fantasy.premierleague.com/api/leagues-classic/${id}/standings/?page_standings=${page}`,
-        { headers: { "User-Agent": "Mozilla/5.0" } }
+      const data = await fetchJson(
+        `https://fantasy.premierleague.com/api/leagues-classic/${id}/standings/?page_standings=${page}`
       );
-
-      if (!standingsRes.ok) {
-        throw new Error(`FPL API returned ${standingsRes.status} for league standings`);
-      }
-
-      const data = await standingsRes.json();
       leagueName = data.league?.name || leagueName;
 
       const results = data.standings?.results || [];
@@ -46,9 +46,7 @@ export default async function handler(req, res) {
 
       hasNext = data.standings?.has_next || false;
       page += 1;
-
-      // safety cap so a huge public league can't loop forever
-      if (page > 20) break;
+      if (page > 20) break; // safety cap
     }
 
     if (managers.length === 0) {
@@ -59,20 +57,19 @@ export default async function handler(req, res) {
     // 2. Get each manager's gameweek-by-gameweek history in parallel
     const historyResults = await Promise.all(
       managers.map(async (m) => {
-        const histRes = await fetch(
-          `https://fantasy.premierleague.com/api/entry/${m.managerId}/history/`,
-          { headers: { "User-Agent": "Mozilla/5.0" } }
-        );
-        if (!histRes.ok) {
+        try {
+          const hist = await fetchJson(
+            `https://fantasy.premierleague.com/api/entry/${m.managerId}/history/`
+          );
+          return { ...m, current: hist.current || [] };
+        } catch {
           return { ...m, current: [] };
         }
-        const hist = await histRes.json();
-        return { ...m, current: hist.current || [] };
       })
     );
 
-    // 3. Reshape into per-gameweek rows
-    const gwMap = new Map(); // event -> [{managerId, teamName, playerName, gross, hit, net}]
+    // 3. Reshape into per-gameweek rows (no goals field yet)
+    const gwMap = new Map();
 
     for (const m of historyResults) {
       for (const gw of m.current) {
