@@ -23,6 +23,15 @@ export default async function handler(req, res) {
   }
 
   try {
+    // 0. Get official finished/current status for every gameweek
+    const bootstrap = await fetchJson(
+      "https://fantasy.premierleague.com/api/bootstrap-static/"
+    );
+    const finishedByEvent = new Map();
+    for (const ev of bootstrap.events || []) {
+      finishedByEvent.set(ev.id, Boolean(ev.finished));
+    }
+
     // 1. Get all managers in the league (handles pagination for >50 teams)
     const managers = [];
     let page = 1;
@@ -99,6 +108,7 @@ export default async function handler(req, res) {
       const netWinner = rows[0];
       return {
         event,
+        finished: finishedByEvent.get(event) ?? true, // default true if FPL has no record (safety)
         rows,
         grossWinner: grossWinner
           ? { teamName: grossWinner.teamName, playerName: grossWinner.playerName, gross: grossWinner.gross }
